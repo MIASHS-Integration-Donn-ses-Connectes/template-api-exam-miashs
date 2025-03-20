@@ -1,4 +1,4 @@
-// index.js
+// src/index.js
 import Fastify from 'fastify';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
@@ -17,9 +17,7 @@ let recipes = {};
 
 // Middleware pour vérifier si une ville existe
 async function checkCityExists(cityId) {
-  const response = await fetch(`${BASE_URL}/cities/${cityId}`, {
-    headers: { 'x-api-key': API_KEY }
-  });
+  const response = await fetch(`${BASE_URL}/cities/${cityId}/insights?apiKey=${API_KEY}`);
   
   if (!response.ok) {
     throw new Error('City not found');
@@ -28,16 +26,18 @@ async function checkCityExists(cityId) {
   return response.json();
 }
 
+// Route racine
+fastify.get('/', async () => {
+  return { message: 'API is running' };
+});
+
 // Route 1: GET /cities/:cityId/infos
 fastify.get('/cities/:cityId/infos', async (request, reply) => {
   try {
     const { cityId } = request.params;
     const city = await checkCityExists(cityId);
     
-    // Récupération des données météo
-    const weatherResponse = await fetch(`${BASE_URL}/weather/${cityId}`, {
-      headers: { 'x-api-key': API_KEY }
-    });
+    const weatherResponse = await fetch(`${BASE_URL}/weather/${cityId}?apiKey=${API_KEY}`);
 
     if (!weatherResponse.ok) {
       throw new Error('Failed to fetch weather data');
@@ -50,17 +50,14 @@ fastify.get('/cities/:cityId/infos', async (request, reply) => {
       max: prediction.max
     }));
 
-    const response = {
+    return {
       coordinates: [city.latitude, city.longitude],
       population: city.population,
       knownFor: city.knownFor,
       weatherPredictions,
       recipes: recipes[cityId] || []
     };
-
-    return response;
   } catch (error) {
-    fastify.log.error(error);
     reply.code(404).send({ error: error.message });
   }
 });
@@ -71,21 +68,16 @@ fastify.post('/cities/:cityId/recipes', async (request, reply) => {
     const { cityId } = request.params;
     const { content } = request.body;
 
-    // Vérification si la ville existe
     await checkCityExists(cityId);
 
-    // Validation du contenu
     if (!content) {
-      reply.code(400).send({ error: 'Content is required' });
-      return;
+      return reply.code(400).send({ error: 'Content is required' });
     }
     if (content.length < 10) {
-      reply.code(400).send({ error: 'Content is too short (minimum 10 characters)' });
-      return;
+      return reply.code(400).send({ error: 'Content is too short (minimum 10 characters)' });
     }
     if (content.length > 2000) {
-      reply.code(400).send({ error: 'Content is too long (maximum 2000 characters)' });
-      return;
+      return reply.code(400).send({ error: 'Content is too long (maximum 2000 characters)' });
     }
 
     const recipeId = Date.now();
@@ -96,9 +88,8 @@ fastify.post('/cities/:cityId/recipes', async (request, reply) => {
     }
     recipes[cityId].push(recipe);
 
-    reply.code(201).send(recipe);
+    return reply.code(201).send(recipe);
   } catch (error) {
-    fastify.log.error(error);
     reply.code(404).send({ error: error.message });
   }
 });
@@ -107,26 +98,21 @@ fastify.post('/cities/:cityId/recipes', async (request, reply) => {
 fastify.delete('/cities/:cityId/recipes/:recipeId', async (request, reply) => {
   try {
     const { cityId, recipeId } = request.params;
-
-    // Vérification si la ville existe
+    
     await checkCityExists(cityId);
 
-    const cityRecipes = recipes[cityId];
-    if (!cityRecipes) {
-      reply.code(404).send({ error: 'No recipes found for this city' });
-      return;
+    if (!recipes[cityId]) {
+      return reply.code(404).send({ error: 'No recipes found for this city' });
     }
 
-    const recipeIndex = cityRecipes.findIndex(r => r.id === parseInt(recipeId));
+    const recipeIndex = recipes[cityId].findIndex(r => r.id === parseInt(recipeId));
     if (recipeIndex === -1) {
-      reply.code(404).send({ error: 'Recipe not found' });
-      return;
+      return reply.code(404).send({ error: 'Recipe not found' });
     }
 
-    cityRecipes.splice(recipeIndex, 1);
-    reply.code(204).send();
+    recipes[cityId].splice(recipeIndex, 1);
+    return reply.code(204).send();
   } catch (error) {
-    fastify.log.error(error);
     reply.code(404).send({ error: error.message });
   }
 });
@@ -136,12 +122,13 @@ const start = async () => {
   try {
     await fastify.listen({ 
       host: process.env.HOST || '0.0.0.0', 
-      port: parseInt(process.env.PORT || 3000) 
+      port: parseInt(process.env.PORT || 3000)
     });
     console.log(`Server listening on ${fastify.server.address().port}`);
     
-    // Soumettre pour examen si on est sur Render
-    await submitForReview(fastify);
+    if (process.env.RENDER_EXTERNAL_URL) {
+      await submitForReview(fastify);
+    }
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
